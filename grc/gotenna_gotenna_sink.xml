@@ -1,0 +1,14 @@
+<?xml version="1.0"?>
+<block>
+  <name>Gotenna Sink</name>
+  <key>gotenna_gotenna_sink</key>
+  <category>[gotenna]</category>
+  <import>import gotenna</import>
+  <make>gotenna.gotenna_sink()</make>
+
+  <sink>
+    <name>pdus</name>
+    <type>message</type>
+  </sink>
+
+</block>
