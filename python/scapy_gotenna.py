@@ -1,4 +1,6 @@
-from scapy.all import *
+from scapy import fields
+from scapy.packet import Packet, bind_layers
+from scapy.config import conf
 
 # Constants
 # ---------------------
@@ -48,14 +50,14 @@ def gid2str(gid):
     if gid == '':
         return b'\x00' * 6
     gid = int(gid, 10)
-    gid = ('%012x' % gid).decode('hex')
+    gid = bytearray.fromhex('%012x' % gid)
     return gid
 
 # Custom Fields
 # ---------------------
-class GotennaGIDField(Field):
+class GotennaGIDField(fields.Field):
     def __init__(self, name, default):
-        Field.__init__(self, name, default, '6s')
+        fields.Field.__init__(self, name, default, '6s')
 
     def i2m(self, pkt, x):
         return gid2str(x)
@@ -65,7 +67,7 @@ class GotennaGIDField(Field):
             x = b'\x00' * 6
         return str2gid(x)
 
-class SaveRoomPacketListField(PacketListField):
+class SaveRoomPacketListField(fields.PacketListField):
     '''
     We don't know what the length of the packet list is. However,
     we know the last 10 bytes are the sig, and hash. So just keep
@@ -86,7 +88,7 @@ class SaveRoomPacketListField(PacketListField):
         while len(remain) > self.pad_len:
             try:
                 p = self.m2i(pkt,remain)
-            except StandardError:
+            except Exception:
                 if conf.debug_dissector:
                     raise
                 p = conf.raw_layer(load=remain)
@@ -95,7 +97,7 @@ class SaveRoomPacketListField(PacketListField):
                 if conf.padding_layer in p:
                     pad = p[conf.padding_layer]
                     remain = pad.load
-                    del(pad.underlayer.payload)
+                    del pad.underlayer.payload
                 else:
                     remain = ""
             lst.append(p)
@@ -105,27 +107,27 @@ class SaveRoomPacketListField(PacketListField):
 # ---------------------
 class Gotenna(Packet):
     name = 'gotenna'
-    fields_desc = [ ByteEnumField('type', None, _PKT_TYPES) ]
+    fields_desc = [ fields.ByteEnumField('type', None, _PKT_TYPES) ]
 
 class Control(Packet):
     name = 'ctrl'
-    fields_desc = [ XByteField('unk0', None),
-                    BitField('next_chan', None, 4),
-                    BitField('unk1', None, 4),
-                    XShortField('hash16', None),
-                    XShortField('hash16_2', None),
-                    XByteField('unk2', None),
-                    StrFixedLenField('sig', "", length=8),
-                    XShortField('csum', None)
+    fields_desc = [ fields.XByteField('unk0', None),
+                    fields.BitField('next_chan', None, 4),
+                    fields.BitField('unk1', None, 4),
+                    fields.XShortField('hash16', None),
+                    fields.XShortField('hash16_2', None),
+                    fields.XByteField('unk2', None),
+                    fields.StrFixedLenField('sig', "", length=8),
+                    fields.XShortField('csum', None)
                     ]
 
 class GotennaFrame(Packet):
     name = 'frame'
-    fields_desc = [ ByteEnumField('type', None, _FRAME_TYPES),
-                    FieldLenField('len', None, length_of='data', fmt='B'),
-                    StrLenField('data', '', length_from=lambda p: p.len),
-                    StrFixedLenField('sig2', '', length=8),
-                    XShortField('hash2', None),
+    fields_desc = [ fields.ByteEnumField('type', None, _FRAME_TYPES),
+                    fields.FieldLenField('len', None, length_of='data', fmt='B'),
+                    fields.StrLenField('data', '', length_from=lambda p: p.len),
+                    fields.StrFixedLenField('sig2', '', length=8),
+                    fields.XShortField('hash2', None),
                     ]
 
     def extract_padding(self, pay):
@@ -145,60 +147,61 @@ class GotennaFrame(Packet):
 class DataHeader(Packet):
     name = 'data'
     #
-    fields_desc = [ XByteField('unk1', None),
-                    FlagsField("flags", 0, 8, ["f0", "plaintext", "f2", "f3", "f4", "f5", "f6", "f7"]),
-                    XShortField('seq', None),
-                    XShortField('convo_id', None),
-                    XByteField('unk2', None),
-                    StrFixedLenField('sig', '', length=8),
-                    XShortField('hash', None),
-                    PacketField('frame', None, GotennaFrame),
+    fields_desc = [ fields.XByteField('unk1', None),
+                    fields.FlagsField("flags", 0, 8, ["f0", "plaintext", "f2", "f3", "f4", "f5", "f6", "f7"]),
+                    fields.XShortField('seq', None),
+                    fields.XShortField('convo_id', None),
+                    fields.XByteField('unk2', None),
+                    fields.StrFixedLenField('sig', '', length=8),
+                    fields.XShortField('hash', None),
+                    fields.PacketField('frame', None, GotennaFrame),
                     ]
 
 class IdentFrame(GotennaFrame):
     name = 'ident'
-    fields_desc = [ ByteEnumField('type', 0x01, _FRAME_TYPES),
-                    XByteField('len', 0x09),
-                    XShortField('bcast', 0x3fff),
+    fields_desc = [ fields.ByteEnumField('type', 0x01, _FRAME_TYPES),
+                    fields.XByteField('len', 0x09),
+                    fields.XShortField('bcast', 0x3fff),
                     GotennaGIDField('gid', ''),
-                    XByteField('unk', 0x00),
-                    StrFixedLenField('sig', '', length=8),
-                    XShortField('hash', None),
+                    fields.XByteField('unk', 0x00),
+                    fields.StrFixedLenField('sig', '', length=8),
+                    fields.XShortField('hash', None),
                     ]
 
 class KeyExchangeFrame(GotennaFrame):
     name = 'pubkey'
-    fields_desc = [ ByteEnumField('type', 0x02, _FRAME_TYPES),
-                    FieldLenField('len', 0x31, length_of='key', fmt='B'),
-                    StrLenField('pubkey', '', length_from=lambda pkt: pkt.len),
-                    StrFixedLenField('sig', '', length=8),
-                    XShortField('hash', None),
+    fields_desc = [ fields.ByteEnumField('type', 0x02, _FRAME_TYPES),
+                    fields.FieldLenField('len', 0x31, length_of='key', fmt='B'),
+                    fields.StrLenField('pubkey', '', length_from=lambda pkt: pkt.len),
+                    fields.StrFixedLenField('sig', '', length=8),
+                    fields.XShortField('hash', None),
                     ]
 
 class PayloadFragment(GotennaFrame):
-    fields_desc = [ ByteEnumField('type', 0x03, _FRAME_TYPES),
-                    FieldLenField('len', None, length_of='data', fmt='B'),
-                    StrLenField('data', '', length_from=lambda pkt: pkt.len),
-                    StrFixedLenField('sig', '', length=8),
-                    XShortField('hash', None),
+    fields_desc = [ fields.ByteEnumField('type', 0x03, _FRAME_TYPES),
+                    fields.FieldLenField('len', None, length_of='data', fmt='B'),
+                    fields.StrLenField('data', '', length_from=lambda pkt: pkt.len),
+                    fields.StrFixedLenField('sig', '', length=8),
+                    fields.XShortField('hash', None),
                     ]
 
 # Payload Sub Packets
 # ---------------------
 class MessageSegment(Packet):
     name = 'message segment'
-    fields_desc = [ ByteEnumField('type', None, _PLD_FRAME_TYPES),
-                    FieldLenField('len', None, length_of='data', fmt='B'),
-                    StrLenField('data', '', length_from=lambda p: p.len),
+    fields_desc = [ fields.ByteEnumField('type', None, _PLD_FRAME_TYPES),
+                    fields.FieldLenField('len', None, length_of='data', fmt='B'),
+                    fields.StrLenField('data', '', length_from=lambda p: p.len),
                     ]
 
-    def extract_padding(self, pay):
-        return "",pay
+    def extract_padding(self, s):
+        return ("", s)
 
     registered_options = {}
     @classmethod
     def register_variant(cls):
         cls.registered_options[cls.type.default] = cls
+
     @classmethod
     def dispatch_hook(cls, _pkt=None, *args, **kargs):
         if _pkt:
@@ -206,63 +209,63 @@ class MessageSegment(Packet):
             return cls.registered_options.get(o, cls)
         return cls
 
-class Message(Packet):
+class GTMessage(Packet):
     name = 'message'
     fields_desc = [ SaveRoomPacketListField('segments', [], MessageSegment, 2),
-                    XShortField('hash', None)
+                    fields.XShortField('hash', None)
                     ]
 
 class EncryptedMessage(Packet):
     name = 'encrypted message'
-    fields_desc = [ PacketListField('segments', [], MessageSegment, length_from=lambda pkt: 17),
+    fields_desc = [ fields.PacketListField('segments', [], MessageSegment, length_from=lambda pkt: 17),
                     ]
 
 # TODO: Handle Encrypted Messages
 class InitialsSegment(MessageSegment):
     name = 'initials'
-    fields_desc = [ ByteEnumField('type', 0x03, _PLD_FRAME_TYPES),
-                    FieldLenField('len', None, length_of='msg', fmt='B'),
-                    StrLenField('initials', '', length_from=lambda pkt: pkt.len),
+    fields_desc = [ fields.ByteEnumField('type', 0x03, _PLD_FRAME_TYPES),
+                    fields.FieldLenField('len', None, length_of='msg', fmt='B'),
+                    fields.StrLenField('initials', '', length_from=lambda pkt: pkt.len),
                     ]
 
 class TextSegment(MessageSegment):
     name = 'message'
-    fields_desc = [ ByteEnumField('type', 0x04, _PLD_FRAME_TYPES),
-                    FieldLenField('len', None, length_of='msg', fmt='B'),
-                    StrLenField('msg', '', length_from=lambda pkt: pkt.len),
+    fields_desc = [ fields.ByteEnumField('type', 0x04, _PLD_FRAME_TYPES),
+                    fields.FieldLenField('len', None, length_of='msg', fmt='B'),
+                    fields.StrLenField('msg', '', length_from=lambda pkt: pkt.len),
                     ]
 
 class LocationSegment(MessageSegment):
     name = 'location'
-    fields_desc = [ ByteEnumField('type', 0x06, _PLD_FRAME_TYPES),
-                    FieldLenField('len', None, length_of='location', fmt='B'),
-                    PacketListField('location', [], MessageSegment, length_from=lambda pkt: pkt.len)
+    fields_desc = [ fields.ByteEnumField('type', 0x06, _PLD_FRAME_TYPES),
+                    fields.FieldLenField('len', None, length_of='location', fmt='B'),
+                    fields.PacketListField('location', [], MessageSegment, length_from=lambda pkt: pkt.len)
                     ]
 
 class HighlightMsgSegment(MessageSegment):
     name = 'hilight msg'
-    fields_desc = [ ByteEnumField('type', 0x07, _PLD_FRAME_TYPES),
-                    FieldLenField('len', None, length_of='msg', fmt='B'),
-                    StrLenField('msg', '', length_from=lambda pkt: pkt.len),
+    fields_desc = [ fields.ByteEnumField('type', 0x07, _PLD_FRAME_TYPES),
+                    fields.FieldLenField('len', None, length_of='msg', fmt='B'),
+                    fields.StrLenField('msg', '', length_from=lambda pkt: pkt.len),
                     ]
 
 class LatitudeSegment(MessageSegment):
     name = 'latitude'
-    fields_desc = [ ByteEnumField('type', 0x08, _PLD_FRAME_TYPES),
-                    XByteField('len', 0x08),
-                    IEEEDoubleField('lat', None),
+    fields_desc = [ fields.ByteEnumField('type', 0x08, _PLD_FRAME_TYPES),
+                    fields.XByteField('len', 0x08),
+                    fields.IEEEDoubleField('lat', None),
                     ]
 class LongitudeSegment(MessageSegment):
     name = 'longitude'
-    fields_desc = [ ByteEnumField('type', 0x09, _PLD_FRAME_TYPES),
-                    XByteField('len', 0x08),
-                    IEEEDoubleField('lon', None),
+    fields_desc = [ fields.ByteEnumField('type', 0x09, _PLD_FRAME_TYPES),
+                    fields.XByteField('len', 0x08),
+                    fields.IEEEDoubleField('lon', None),
                     ]
 class TimestampSegment(MessageSegment):
     name = 'ts'
-    fields_desc = [ ByteEnumField('type', 0x13, _PLD_FRAME_TYPES),
-                    XByteField('len', 0x04),
-                    IntField('ts', None),
+    fields_desc = [ fields.ByteEnumField('type', 0x13, _PLD_FRAME_TYPES),
+                    fields.XByteField('len', 0x04),
+                    fields.IntField('ts', None),
                     ]
 
 class SourceSegment(MessageSegment):
@@ -271,22 +274,22 @@ class SourceSegment(MessageSegment):
     It's a bit of a scapy-ism hack.
     '''
     name = 'src'
-    fields_desc = [ ByteEnumField('type', 0xfb, _PLD_FRAME_TYPES),
-                    XByteField('len', 0x0f),
-                    XByteField('unk1', None),
-                    XShortField('unk2', None),
+    fields_desc = [ fields.ByteEnumField('type', 0xfb, _PLD_FRAME_TYPES),
+                    fields.XByteField('len', 0x0f),
+                    fields.XByteField('unk1', None),
+                    fields.XShortField('unk2', None),
                     GotennaGIDField('gid', ''),
-                    XShortField('unk4', None),
-                    XByteField('unk5', None),
-                    XByteField('unk6', None),
-                    ShortField('msg_ctr', None),
+                    fields.XShortField('unk4', None),
+                    fields.XByteField('unk5', None),
+                    fields.XByteField('unk6', None),
+                    fields.ShortField('msg_ctr', None),
                     ]
 
 class PubKeySegment(MessageSegment):
     name = 'pubkey rsp'
-    fields_desc = [ ByteEnumField('type', 0xfc, _PLD_FRAME_TYPES),
-                    FieldLenField('len', 0x31, length_of='pubkey', fmt='B'),
-                    StrLenField('pubkey', '', length_from=lambda pkt: pkt.len),
+    fields_desc = [ fields.ByteEnumField('type', 0xfc, _PLD_FRAME_TYPES),
+                    fields.FieldLenField('len', 0x31, length_of='pubkey', fmt='B'),
+                    fields.StrLenField('pubkey', '', length_from=lambda pkt: pkt.len),
                     ]
 
 # Bindings
@@ -299,4 +302,3 @@ bind_layers(Gotenna, DataHeader, type=0x23) # TX: Here is who I am (just my name
 bind_layers(Gotenna, DataHeader, type=0x34) # RX: Here is who I am (and my key)
 bind_layers(Gotenna, DataHeader, type=0x45) # TX: Here is the data
 bind_layers(Gotenna, DataHeader, type=0x56)     # RX: Message received
-
